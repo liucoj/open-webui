@@ -1,6 +1,6 @@
 {
-  "name": "Open WebUI",
-  "short_name": "WebUI",
+  "name": "rEda",
+  "short_name": "rEda",
   "icons": [
     {
       "src": "/static/web-app-manifest-192x192.png",
