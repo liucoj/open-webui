@@ -977,7 +977,7 @@
 							https://docs.openwebui.com/license. -->
 								<img
 									src="{WEBUI_BASE_URL}/static/reda-mark.png"
-									class="sidebar-new-chat-icon size-5 object-contain dark:invert group-hover:hidden"
+									class="sidebar-new-chat-icon size-3 object-contain dark:invert group-hover:hidden"
 									alt=""
 								/>
 
@@ -1164,7 +1164,7 @@
 						<img
 							crossorigin="anonymous"
 							src="{WEBUI_BASE_URL}/static/reda-mark.png"
-							class="sidebar-new-chat-icon size-5 object-contain dark:invert"
+							class="sidebar-new-chat-icon size-3 object-contain dark:invert"
 							alt=""
 						/>
 					</a>
@@ -1175,7 +1175,7 @@
 					https://docs.openwebui.com/license. -->
 						<div
 							id="sidebar-webui-name"
-							class=" self-center font-bold text-gray-700 dark:text-gray-200"
+							class=" self-center text-gray-700 dark:text-gray-200"
 						>
 							{$WEBUI_NAME}
 						</div>
