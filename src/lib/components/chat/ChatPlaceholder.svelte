@@ -59,10 +59,11 @@
 
 {#key mounted}
 	<div class="m-auto w-full max-w-[58rem] px-8 lg:px-20">
-		<div class="flex justify-start">
-			<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 200 }}>
+		<div class="flex items-center justify-start">
+			<div class="flex items-center -space-x-4" in:fade={{ duration: 200 }}>
 				{#each models as model, modelIdx}
 					<button
+						class="flex items-center justify-center"
 						on:click={() => {
 							selectedModelIdx = modelIdx;
 						}}
@@ -77,7 +78,7 @@
 						>
 							<img
 								src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id}&lang=${$i18n.language}`}
-								class=" size-[2.7rem] rounded-full"
+								class="size-[2.7rem] rounded-full object-contain"
 								alt="logo"
 								draggable="false"
 								on:error={(e) => {

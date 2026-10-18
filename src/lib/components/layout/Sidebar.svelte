@@ -976,8 +976,8 @@
 							Do not alter, remove, obscure, or replace it except as LICENSE permits:
 							https://docs.openwebui.com/license. -->
 								<img
-									src="{WEBUI_BASE_URL}/static/favicon.png"
-									class="sidebar-new-chat-icon size-5 rounded-full group-hover:hidden"
+									src="{WEBUI_BASE_URL}/static/reda-mark.png"
+									class="sidebar-new-chat-icon size-6 object-contain dark:invert group-hover:hidden"
 									alt=""
 								/>
 
@@ -1163,8 +1163,8 @@
 					https://docs.openwebui.com/license. -->
 						<img
 							crossorigin="anonymous"
-							src="{WEBUI_BASE_URL}/static/favicon.png"
-							class="sidebar-new-chat-icon size-5 rounded-full"
+							src="{WEBUI_BASE_URL}/static/reda-mark.png"
+							class="sidebar-new-chat-icon size-6 object-contain dark:invert"
 							alt=""
 						/>
 					</a>
@@ -1175,7 +1175,7 @@
 					https://docs.openwebui.com/license. -->
 						<div
 							id="sidebar-webui-name"
-							class=" self-center font-normal text-gray-700 dark:text-gray-200"
+							class=" self-center font-bold text-gray-700 dark:text-gray-200"
 						>
 							{$WEBUI_NAME}
 						</div>
