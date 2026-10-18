@@ -977,7 +977,7 @@
 							https://docs.openwebui.com/license. -->
 								<img
 									src="{WEBUI_BASE_URL}/static/reda-mark.png"
-									class="sidebar-new-chat-icon size-6 object-contain dark:invert group-hover:hidden"
+									class="sidebar-new-chat-icon size-5 object-contain dark:invert group-hover:hidden"
 									alt=""
 								/>
 
@@ -1164,7 +1164,7 @@
 						<img
 							crossorigin="anonymous"
 							src="{WEBUI_BASE_URL}/static/reda-mark.png"
-							class="sidebar-new-chat-icon size-6 object-contain dark:invert"
+							class="sidebar-new-chat-icon size-5 object-contain dark:invert"
 							alt=""
 						/>
 					</a>
