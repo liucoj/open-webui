@@ -24,7 +24,7 @@ from datetime import timedelta
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, build_event, publish_event
@@ -33,6 +33,7 @@ from open_webui.models.automations import AutomationModel, AutomationRuns, Autom
 from open_webui.models.chats import ChatForm, Chats
 from open_webui.models.config import Config
 from open_webui.models.folders import Folders
+from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.models.messages import MessageForm
 from open_webui.models.users import Users
 from open_webui.utils.auth import create_token
@@ -46,8 +47,8 @@ from open_webui.utils.recurrence import (
     validate_rrule,
 )
 from open_webui.utils.task import prompt_template
-from open_webui.utils.tether import get_terminal_connections, get_terminal_client
-from open_webui.utils.terminals import get_terminal_server_url
+from open_webui.utils.agents.discovery import get_models as get_agent_models
+from open_webui.utils.terminals import initialize_terminal_directory, resolve_terminal_connection
 from starlette.datastructures import Headers
 
 log = logging.getLogger(__name__)
@@ -184,6 +185,7 @@ async def _resolve_model_defaults(app, model_id: str) -> dict:
     feature_checks = {
         'web_search': await Config.get('web.search.enable'),
         'image_generation': await Config.get('image_generation.enable'),
+        'video_generation': await Config.get('video_generation.enable'),
     }
 
     for feature_id in default_feature_ids:
@@ -197,49 +199,35 @@ async def _resolve_model_defaults(app, model_id: str) -> dict:
     return defaults
 
 
-async def _set_terminal_cwd(app, server_id: str, user, cwd: str, chat_id: str) -> None:
-    """Set the working directory on a terminal server via the proxy.
-
-    Routes through the open-webui terminal proxy endpoint so that
-    auth headers, orchestrator policy routing, and X-User-Id are
-    handled correctly — same path the frontend uses.
-    """
-    import aiohttp
-    from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
-
-    connections = await get_terminal_connections(user)
-    connection = next((c for c in connections if c.get('id') == server_id), None)
-    if connection is None:
-        log.warning(f'Terminal server {server_id} not found for CWD set')
+async def validate_automation_terminal(request, user, data: dict, automation_id: str | None = None):
+    terminal = data.get('terminal') or {}
+    model_id = data['model_id']
+    is_agent = model_id.startswith('agent:')
+    if not terminal.get('server_id'):
+        if is_agent:
+            raise HTTPException(400, 'Select a terminal for the agent.')
         return
+    if terminal['server_id'].startswith('template:'):
+        from open_webui.utils.terminals import template_connection, require_model_access
 
-    base_url = get_terminal_server_url(connection)
-    if not base_url:
+        _, template = await template_connection(user, terminal['server_id'])
+        scope = (template.get('data') or {}).get('scope')
+        if (data.get('target') or {}).get('type') == 'channel' and (is_agent or scope == 'chat'):
+            raise HTTPException(400, 'This terminal requires a chat destination.')
+        if scope == 'model':
+            await require_model_access(user, model_id, terminal['server_id'], request)
         return
-
-    target_url = f'{base_url}/files/cwd'
-
-    headers = {'Content-Type': 'application/json', 'X-User-Id': user.id}
-    if chat_id:
-        headers['X-Session-Id'] = chat_id
-
-    auth_type = connection.get('auth_type', 'bearer')
-    if auth_type == 'bearer':
-        headers['Authorization'] = f'Bearer {connection.get("key", "")}'
-
-    try:
-        async with get_terminal_client(base_url, user.id, timeout=aiohttp.ClientTimeout(total=10)) as session:
-            async with session.post(
-                target_url,
-                json={'path': cwd},
-                headers=headers,
-                ssl=AIOHTTP_CLIENT_SESSION_SSL,
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    log.warning(f'Failed to set terminal CWD to {cwd}: HTTP {resp.status} — {body[:200]}')
-    except Exception as e:
-        log.warning(f'Failed to set terminal CWD: {e}')
+    metadata = {'terminal_id': terminal['server_id'], 'model_id': model_id}
+    if automation_id:
+        metadata['automation_id'] = automation_id
+    if not await resolve_terminal_connection(request, user, metadata):
+        raise HTTPException(400, 'The configured terminal is unavailable for this automation.')
+    if is_agent:
+        if (data.get('target') or {}).get('type') == 'channel':
+            raise HTTPException(400, 'Agent automations require a chat destination.')
+        available = await get_agent_models(request, user, metadata, cwd=terminal.get('cwd'))
+        if not any(model['id'] == model_id for model in available):
+            raise HTTPException(400, 'Agent model is unavailable in the configured terminal.')
 
 
 async def _execute_channel_automation(
@@ -318,6 +306,16 @@ async def _execute_channel_automation(
         'automation_id': automation.id,
         'background_tasks': {},
     }
+    terminal = automation.data.get('terminal') or {}
+    if terminal.get('server_id'):
+        form_data['terminal_id'] = terminal['server_id']
+        await initialize_terminal_directory(
+            request,
+            user,
+            {'chat_id': form_data['chat_id'], 'automation_id': automation.id, 'model_id': model_id},
+            terminal['server_id'],
+            terminal.get('cwd'),
+        )
     await app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
 
     from open_webui.socket.main import sio
@@ -389,13 +387,17 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         if not app.state.MODELS:
             await get_all_models(_build_request(app, token=token), user=user)
 
+        request = _build_request(app, token=token)
+        await validate_automation_terminal(request, user, automation.data, automation.id)
+
         target = automation.data.get('target') or {}
         if target.get('type') == 'channel':
             await _execute_channel_automation(app, automation, user, prompt, model_id, token)
             return
 
+        # Runs land in the automation's folder while its creator can still write there.
         folder_id = automation.folder_id
-        if folder_id and not await Folders.get_folder_by_id_and_user_id(folder_id, automation.user_id):
+        if folder_id and not await has_folder_write_access(automation.user_id, folder_id):
             await Automations.clear_folder_ids(automation.user_id, [folder_id])
             folder_id = None
 
@@ -442,6 +444,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                     'meta': {'automation_id': automation.id},
                 },
             ),
+            internal_meta={'automation_id': automation.id},
         )
 
         if not chat:
@@ -495,6 +498,16 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         # Call the full chat completion pipeline (same as POST /api/chat/completions).
         # The handler reference is stored on app.state to avoid circular imports.
         request = _build_request(app, token=token)
+        terminal = automation.data.get('terminal') or {}
+        if terminal.get('server_id'):
+            form_data['terminal_id'] = terminal['server_id']
+            await initialize_terminal_directory(
+                request,
+                user,
+                {'chat_id': chat.id, 'automation_id': automation.id, 'model_id': model_id},
+                terminal['server_id'],
+                terminal.get('cwd'),
+            )
         await app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
 
         reply = await Chats.get_message_by_id_and_message_id(chat.id, assistant_msg_id)

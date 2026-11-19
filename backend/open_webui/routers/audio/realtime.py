@@ -415,7 +415,9 @@ async def realtime_call(ws: WebSocket):
                 raise ValueError('Invalid agent model')
             # Match HTTP chat authentication for terminal connections using session auth.
             ws.state.token = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
-            candidates = await get_agent_models(ws, user, terminal_id, chat_id, provider=parts[2])
+            candidates = await get_agent_models(
+                ws, user, {'terminal_id': terminal_id, 'chat_id': chat_id}, provider=parts[2]
+            )
             model = next((item for item in candidates if item['id'] == model_id), None)
             if model is None:
                 raise ValueError('Agent model is unavailable in the selected terminal')
@@ -423,7 +425,7 @@ async def realtime_call(ws: WebSocket):
             if not ws.app.state.MODELS:
                 await get_all_models(ws, user=user)
             model = ws.app.state.MODELS.get(model_id)
-            if not model or model.get('direct'):
+            if not model:
                 raise ValueError('Bridge requires a server-configured chat model')
         model_info = await Models.get_model_by_id(model_id)
         if (

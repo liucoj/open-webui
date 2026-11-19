@@ -5,7 +5,7 @@
 
 	import { getChannelMentionApps } from '$lib/apis/channels';
 	import { mentionAttributes } from '$lib/utils/channelMentions';
-	import { channels, models, config } from '$lib/stores';
+	import { baseModels, channels, models, config } from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import Grid from '$lib/components/icons/Grid.svelte';
@@ -151,9 +151,10 @@
 				})
 				.catch(() => {});
 		}
+		const input = document.activeElement;
 		const keydownListener = (e: KeyboardEvent) => {
 			// required to prevent the default enter behavior
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && e.target === input) {
 				e.preventDefault();
 				select(selectedIndex);
 			}
@@ -171,8 +172,8 @@
 		} else {
 			if (modelSuggestions) {
 				_models = [
-					...$models
-						.filter((m) => !m?.direct)
+					...$baseModels
+						.filter((m) => !('owner_id' in m && m.owner_id))
 						.map((m) => ({ type: 'model', id: m.id, label: m.name, data: m }))
 				];
 			}

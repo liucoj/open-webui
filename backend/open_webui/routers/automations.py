@@ -19,14 +19,17 @@ from open_webui.models.access_grants import AccessGrants, has_public_write_acces
 from open_webui.models.channels import Channels
 from open_webui.models.config import Config
 from open_webui.models.folders import Folders
+from open_webui.utils.access_control.folders import has_folder_write_access
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.agents.discovery import get_models as get_agent_models
 from open_webui.utils.automations import (
     execute_automation,
     next_n_runs_ns,
     next_run_ns,
     rrule_interval_seconds,
     validate_rrule,
+    validate_automation_terminal,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -94,14 +97,31 @@ async def check_automation_limits(request, user, rrule_str: str, db, is_create: 
 
 
 async def check_automation_folder_access(folder_id: Optional[str], user, db: AsyncSession):
+    """An automation can live in any folder its creator can write to."""
     if folder_id is None:
         return
-    folder = await Folders.get_folder_by_id_and_user_id(folder_id, user.id, db=db)
-    if not folder:
+    folder = await Folders.get_folder_by_id(folder_id, db=db)
+    if not folder or not (user.role == 'admin' or await has_folder_write_access(user.id, folder_id, db=db)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
+
+
+async def check_automation_manage_access(automation, user, db: AsyncSession):
+    """Pausing, running and run history: the creator, or anyone who can write to its folder."""
+    if automation and automation.user_id == user.id:
+        return
+    if (
+        automation
+        and automation.folder_id
+        and (user.role == 'admin' or await has_folder_write_access(user.id, automation.folder_id, db=db))
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=ERROR_MESSAGES.NOT_FOUND,
+    )
 
 
 async def check_automation_channel_access(form_data: AutomationForm, user, db: AsyncSession):
@@ -196,6 +216,26 @@ async def get_automation_items(
     }
 
 
+@router.get('/models')
+async def get_automation_models(
+    request: Request,
+    terminal_id: str,
+    cwd: str | None = None,
+    automation_id: str | None = None,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    await check_automations_permission(request, user)
+    automation = None
+    if automation_id:
+        automation = await Automations.get_by_id(automation_id, db=db)
+        check_automation_access(automation, user)
+    metadata = {'terminal_id': terminal_id}
+    if automation:
+        metadata.update(model_id=automation.data.get('model_id'), automation_id=automation.id)
+    return await get_agent_models(request, user, metadata, cwd=cwd)
+
+
 # Create New Automation
 
 
@@ -209,6 +249,7 @@ async def create_new_automation(
     await check_automations_permission(request, user)
     await check_automation_folder_access(form_data.folder_id, user, db)
     await check_automation_channel_access(form_data, user, db)
+    await validate_automation_terminal(request, user, form_data.data.model_dump())
     try:
         await validate_rrule(form_data.data.rrule, tz=user.timezone)
     except ValueError as e:
@@ -264,6 +305,7 @@ async def update_automation_by_id(
     check_automation_access(automation, user)
     await check_automation_folder_access(form_data.folder_id, user, db)
     await check_automation_channel_access(form_data, user, db)
+    await validate_automation_terminal(request, user, form_data.data.model_dump(), id)
 
     try:
         await validate_rrule(form_data.data.rrule, tz=user.timezone)
@@ -300,7 +342,7 @@ async def toggle_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage_access(automation, user, db)
     toggled = await Automations.toggle(id, await next_run_ns(automation.data['rrule'], tz=user.timezone), db=db)
     response = await enrich_automation(toggled, db, tz=user.timezone)
     await publish_event(
@@ -326,7 +368,7 @@ async def run_automation_by_id(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage_access(automation, user, db)
     automation = await Automations.update_last_run_at(automation.id, db=db)
     asyncio.create_task(execute_automation(request.app, automation))
     await publish_event(
@@ -379,7 +421,7 @@ async def get_automation_runs(
 ):
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage_access(automation, user, db)
     return await AutomationRuns.get_by_automation(id, skip=skip, limit=limit, db=db)
 
 
@@ -395,7 +437,7 @@ async def get_automation_run(
 
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
-    check_automation_access(automation, user)
+    await check_automation_manage_access(automation, user, db)
     run = await db.get(AutomationRun, run_id)
     if not run or run.automation_id != id:
         raise HTTPException(404, 'Run not found')
